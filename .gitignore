@@ -1,0 +1,11 @@
+# Deployment-specific configuration: upstream addresses are private to a network.
+config.json
+
+# Runtime state.
+*.log
+*.pid
+
+# A linked harness dependency lives here (a junction to the harness's own copy of
+# schemastery). The trailing slash matters: without it git can follow the link and
+# commit another project's sources into this repo.
+node_modules/

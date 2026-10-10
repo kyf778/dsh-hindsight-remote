@@ -1,0 +1,53 @@
+{
+  "name": "@local/dsh-hindsight-remote",
+  "version": "1.0.0",
+  "description": "Reach a Hindsight memory server from any network: a loopback routing proxy plus a settings panel, so the harness apiUrl never has to change.",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "hindsight",
+    "memory",
+    "tailscale",
+    "proxy"
+  ],
+  "license": "MIT",
+  "author": "kyf778",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./proxy": "./proxy.mjs"
+  },
+  "files": [
+    "index.js",
+    "proxy.mjs",
+    "ensure-proxy.mjs",
+    "client.js",
+    "cordis.patch.yml",
+    "config.example.json",
+    "icon.svg",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node test-isolated.mjs",
+    "test:host": "node test-host-plugin.mjs"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh": ">=0.2.0-rc.2"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "ui-settings",
+        "locale"
+      ]
+    }
+  }
+}

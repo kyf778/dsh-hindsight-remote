@@ -1,0 +1,31 @@
+// Example configuration. Copy to `config.json` (which is gitignored) and edit.
+//
+// `upstreams` lists the addresses this proxy may forward memory traffic to. They are
+// probed in parallel on every request and the fastest reachable one is used, so the
+// harness's apiUrl can stay a single fixed loopback value while the machine moves
+// between networks.
+//
+// `priority` breaks ties: when a lower-priority-number upstream is reachable within
+// 25 ms of the fastest one, it wins. Give your fastest/most-local network the lowest
+// number so it is used whenever it is available.
+{
+  "host": "127.0.0.1",
+  "port": 18888,
+
+  "upstreams": [
+    {
+      "name": "lan",
+      "host": "192.168.1.100",
+      "port": 8888,
+      "priority": 0
+    },
+    {
+      "name": "tailscale",
+      "host": "100.64.0.1",
+      "port": 8888,
+      "priority": 1
+    }
+  ],
+
+  "tailscaleExe": "C:\\Program Files\\Tailscale\\tailscale.exe"
+}
