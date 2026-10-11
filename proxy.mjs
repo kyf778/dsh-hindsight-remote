@@ -176,6 +176,43 @@ async function serviceRunning(name) {
 }
 
 /**
+ * Poll until tailscaled answers the LocalAPI, so the caller does not race a
+ * daemon that is still starting up. A reply carrying BackendState proves the
+ * daemon is reachable; anything else (connection refused, timeout) does not.
+ */
+async function waitForDaemon(exe, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const r = await run(exe, ['status', '--json'], 8_000);
+    if (r.code === 0 && /"BackendState"/.test(r.stdout || '')) return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise((res) => setTimeout(res, 1000));
+  }
+}
+
+/** BackendState of the running daemon, or null when it cannot be read. */
+async function backendState(exe) {
+  const r = await run(exe, ['status', '--json'], 10_000);
+  const m = /"BackendState"\s*:\s*"([^"]*)"/.exec(r.stdout || '');
+  return m ? m[1] : null;
+}
+
+/**
+ * Unattended-mode (ForceDaemon) setting: true, false, or null when unknown.
+ *
+ * `tailscale debug prefs` OMITS the ForceDaemon field entirely when the setting
+ * is off, so a missing field on a successful read means false -- not "unknown".
+ * Treating the omission as unknown is what previously made this check silently
+ * skip itself.
+ */
+async function unattendedEnabled(exe) {
+  const r = await run(exe, ['debug', 'prefs'], 10_000);
+  if (r.code !== 0 || !/"ControlURL"/.test(r.stdout || '')) return null;
+  const m = /"ForceDaemon"\s*:\s*(true|false)/.exec(r.stdout || '');
+  return m ? m[1] === 'true' : false;
+}
+
+/**
  * Start the proxy on this event loop.
  *
  * Resolves to `{ ok:false, error:'EADDRINUSE', ... }` when the port is already
@@ -331,15 +368,56 @@ export function startProxy(opts = {}) {
       const before = await serviceRunning('Tailscale');
       if (!before) {
         await run('sc.exe', ['start', 'Tailscale'], 20_000);
-        await new Promise((r) => setTimeout(r, 2500));
       }
-      const up = await run(tailscaleExe, ['up', '--accept-dns=false', '--timeout=25s'], 45_000);
+      // Wait for the daemon to answer LocalAPI. Without this, the bare "up"
+      // below can run against a daemon that is still starting and silently do
+      // nothing (it reports success while BackendState stays NoState).
+      const daemonUp = await waitForDaemon(tailscaleExe, 30_000);
+
+      // Windows tailscaled stays in NoState without a GUI user session, and
+      // "tailscale up" then exits 0 while nothing connects. Unattended mode
+      // (ForceDaemon) is what lets it run headless, so the endpoint is only
+      // usable at all on a machine with no GUI session if it ensures the
+      // setting. `set` -- unlike `up` -- changes only what is named, so this
+      // cannot revert any of the user's other preferences; it is idempotent.
+      const unattendedBefore = await unattendedEnabled(tailscaleExe);
+      let unattendedSet = false;
+      if (daemonUp && unattendedBefore === false) {
+        const setRes = await run(tailscaleExe, ['set', '--unattended'], 20_000);
+        unattendedSet = setRes.code === 0;
+      }
+
+      // Use the BARE "tailscale up" -- not a single flag.
+      // "tailscale up" only takes its no-op "just bring the network up" path when
+      // the flag set is completely empty. Passing ANY flag -- including prefless
+      // ones like --timeout -- defeats that path and re-enables the
+      // "must mention every non-default setting" check, which then fails with
+      // "changing settings via 'tailscale up' requires mentioning all
+      // non-default flags" on any machine with a non-default preference (e.g. a
+      // custom --hostname). Preferences are the user's own; this endpoint only
+      // brings the network up, so it must not restate or reset them.
+      // run()'s own timeout bounds this call.
+      const up = await run(tailscaleExe, ['up'], 45_000);
+      const state = await backendState(tailscaleExe);
+      const ok = up.code === 0 && state === 'Running';
       activeAt = 0;
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({
-        ok: up.code === 0,
+        ok,
         serviceWasRunning: before,
+        daemonReady: daemonUp,
+        unattendedBefore,
+        unattendedSet,
+        backendState: state,
         code: up.code,
+        // Report the real outcome rather than trusting the exit code: without
+        // unattended mode "up" can exit 0 while the backend never leaves
+        // NoState, because tailscaled then waits for a GUI user session.
+        detail: ok ? undefined
+          : !daemonUp ? 'tailscaled did not become reachable'
+          : state !== 'Running'
+            ? `tailscaled did not reach Running (BackendState=${state ?? 'unknown'}). If this machine has no Tailscale GUI session, enable unattended mode once: tailscale set --unattended`
+            : undefined,
         stdout: (up.stdout || '').slice(0, 3000),
         stderr: (up.stderr || '').slice(0, 3000),
       }));
