@@ -444,7 +444,10 @@ export function startProxy(opts = {}) {
             resolve(true);
           },
         );
-        preq.setTimeout(30_000, () => preq.destroy(new Error('upstream timeout')));
+        // 上游是 Hindsight：LLM 提取/整理/反思可能长时间静默（compose 里
+        // HINDSIGHT_API_LLM_TIMEOUT=600）。原来的 30s 空闲超时会误杀这类慢
+        // 请求，并把代理误判成 "lan failed" 切到不通的备线。这里对齐到 600s。
+        preq.setTimeout(600_000, () => preq.destroy(new Error('upstream timeout')));
         preq.on('error', () => resolve(false));
         req.pipe(preq);
       });
